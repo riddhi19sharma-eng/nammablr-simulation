@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Namma Bengaluru Quest</title>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#9cc9ee;font-family:Gotham,Arial,sans-serif;user-select:none}
+canvas{display:block}
+.box{position:fixed;color:#fff;background:rgba(10,30,60,.75);border-radius:10px}
+#title{top:10px;left:50%;transform:translateX(-50%);width:400px;max-width:90vw;height:56px;border-left:4px solid #ffb300}
+#title b{position:absolute;left:16px;top:8px;font-size:15px}#title span{position:absolute;left:16px;top:30px;font-size:13px;color:#dce6f0}
+#hud{top:90px;right:12px;width:210px;height:96px}
+#hud div{position:absolute;left:12px;font-weight:bold;font-size:16px}
+#help{bottom:12px;left:50%;transform:translateX(-50%);padding:5px 14px;font-size:13px;background:rgba(0,0,0,.45);border-radius:14px;white-space:nowrap;max-width:94vw;overflow:hidden}
+#info{bottom:52px;left:50%;transform:translateX(-50%);width:340px;max-width:90vw;min-height:80px;background:#fafafa;color:#12305a;border-top:4px solid #ffb300;text-align:center;display:none;padding:6px 12px 10px;box-sizing:border-box}
+#info h3{margin:6px 0;font-size:20px}#info p{margin:0;font-size:16px;white-space:pre-line}
+#banner{top:25%;left:50%;transform:translateX(-50%);width:600px;max-width:90vw;font-size:30px;font-weight:bold;text-align:center;padding:12px;background:rgba(0,0,0,.45);display:none;box-sizing:border-box}
+#prompt{top:62%;left:50%;transform:translateX(-50%);padding:8px 18px;font-size:18px;background:rgba(0,0,0,.6);display:none;cursor:pointer}
+#sig{top:196px;right:12px;padding:6px 12px;font-size:15px;font-weight:bold}
+</style></head><body>
+<div id="title" class="box"><b>NAMMA BENGALURU QUEST</b><span>Find every treasure — and watch out for traffic!</span></div>
+<div id="hud" class="box"><div id="timer" style="top:6px;font-size:24px;color:#ffb300"></div><div id="items" style="top:38px"></div><div id="score" style="top:62px"></div></div>
+<div id="sig" class="box"></div>
+<div id="banner" class="box"></div>
+<div id="prompt" class="box">Press E to Collect</div>
+<div id="info" class="box"><h3 id="it"></h3><p id="ib"></p></div>
+<div id="help" class="box">WASD = Move | Space = Jump | Drag = Look | E / tap = Collect | Click objects for info</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const S=1; // world units = original units
+const rnd=(a,b)=>a+Math.random()*(b-a), pick=a=>a[Math.floor(Math.random()*a.length)];
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x9cc9ee);scene.fog=new THREE.Fog(0xd3e6f5,60,260);
+const cam=new THREE.PerspectiveCamera(65,innerWidth/innerHeight,.1,600);
+const R=new THREE.WebGLRenderer({antialias:true});R.setSize(innerWidth,innerHeight);R.setPixelRatio(Math.min(devicePixelRatio,2));document.body.appendChild(R.domElement);
+scene.add(new THREE.HemisphereLight(0xffffff,0x887766,.95));
+const sun=new THREE.DirectionalLight(0xffffff,.7);sun.position.set(30,60,20);scene.add(sun);
+addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();R.setSize(innerWidth,innerHeight)});
+
+const mats={};const M=(c,o)=>{const k=c+(o?JSON.stringify(o):'');return mats[k]||(mats[k]=new THREE.MeshLambertMaterial(Object.assign({color:c},o||{})))};
+function B(w,h,d,c,x,y,z,p,o){const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),o&&o.lit?new THREE.MeshBasicMaterial({color:c}):M(c,o));m.position.set(x,y,z);(p||scene).add(m);return m}
+function Cyl(r,h,c,x,y,z,p){const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,h,12),M(c));m.position.set(x,y,z);(p||scene).add(m);return m}
+function Sph(r,c,x,y,z,p){const m=new THREE.Mesh(new THREE.SphereGeometry(r,12,8),M(c));m.position.set(x,y,z);(p||scene).add(m);return m}
+function signTex(text,bg,fg,w,h){const c=document.createElement('canvas');c.width=w*64;c.height=h*64;const g=c.getContext('2d');g.fillStyle=bg;g.fillRect(0,0,c.width,c.height);g.fillStyle=fg;g.textAlign='center';g.textBaseline='middle';
+ const ls=text.split('\n');const fs=Math.min(c.height/ls.length*.7,c.width/Math.max(...ls.map(l=>l.length))*1.5);g.font='bold '+fs+'px Arial';ls.forEach((l,i)=>g.fillText(l,c.width/2,c.height*(i+.5)/ls.length));return new THREE.CanvasTexture(c)}
+function sign(text,w,h,x,y,z,ry,bg,fg){const m=new THREE.Mesh(new THREE.PlaneGeometry(w,h),new THREE.MeshBasicMaterial({map:signTex(text,bg,fg,w,h)}));m.position.set(x,y,z);m.rotation.y=ry;scene.add(m);return m}
+function label(text,color){const s=new THREE.Sprite(new THREE.SpriteMaterial({map:signTex(text,'rgba(0,0,0,0)',color,6,1),depthTest:false,transparent:true}));s.scale.set(5,.85,1);return s}
+const clickable=[];function info(o,t){o.userData.info=t;clickable.push(o)}
+
+// ===== ENVIRONMENT =====
+B(700,2,700,0x7c7c74,0,-1.02,-50);
+for(let i=0;i<=15;i++){const h=rnd(20,50);B(6,h,6,pick([0x9db0c3,0xb7c3cf,0x8fa3b8]),-48+i*6.5,h/2,-150)}
+const clouds=[];for(let i=0;i<8;i++){const g=new THREE.Group();for(let k=0;k<4;k++){const s=Sph(rnd(4,7),0xffffff,k*5-7,rnd(0,2),rnd(0,3),g);s.scale.y=.55}
+ g.userData={x:rnd(-140,140),y:rnd(45,75),z:rnd(-150,-20),sp:rnd(1,2.5)};g.position.set(g.userData.x,g.userData.y,g.userData.z);scene.add(g);clouds.push(g)}
+
+// ===== ROAD =====
+B(18,.04,190,0x3b3b3f,0,0,-50);B(.6,.35,190,0xc9c9c9,0,.17,-50);
+for(let z=30;z>=-134;z-=12)Sph(.45,0x2e7d32,0,.6,z);
+const mark=(sx,sz,x,z)=>B(sx,.02,sz,0xffffff,x,.04,z,null,{lit:1});
+[-1,1].forEach(s=>{B(3.5,.16,190,0xb9b2a6,s*10.75,.08,-50);B(.2,.2,190,0xdcdcdc,s*9.1,.1,-50);mark(.15,190,s*7.1,-50);for(let z=36;z>=-135;z-=6)mark(.15,2.5,s*3.7,z)});
+for(let i=0;i<15;i++)mark(.55,3,-7+i,0);mark(6.8,.4,3.7,3.9);mark(6.8,.4,-3.7,-3.9);
+
+// ===== BUILDINGS =====
+const BB=['ನಮ್ಮ ಬೆಂಗಳೂರು\nNamma Bengaluru','Silicon Valley\nof India','ನಮ್ಮ ಮೆಟ್ರೋ\nNamma Metro'];
+const Ls=[['BENGALURU\nTECH PARK',14,26,1],['WIPRO',12,18,1],['ಸಿಲ್ಕ್ ಸೀರೆ\nSILK SAREES',13,12,0],['INFOSYS',14,30,1],['FILTER KAAPI\nCAFÉ',11,12,0],['STARTUP HUB',13,20,1],['TCS',14,26,1],['BOOK WORLD',12,12,0],['BANGALORE\nIT CENTRE',14,24,1],['ELECTRONICS\nMART',12,14,0],['DATA\nSOLUTIONS',14,22,1]];
+const Rs=[['MICROSOFT',14,24,1],['ಜ್ಯುವೆಲರ್ಸ್\nJEWELLERS',12,12,0],['ACCENTURE',14,28,1],['TECH MAHINDRA',14,22,1],["MEN'S WEAR",12,12,0],['SOFTWARE\nSOLUTIONS',13,18,1],['MEDICALS',12,12,0],['TECH HUB',14,26,1],['SUPER MARKET',12,12,0],['CLOUD\nSYSTEMS',14,22,1],['CYBER PARK',13,20,1]];
+function building(s,z,w,h,name,tech){
+ const g=new THREE.Group(),fo=s*13-s*.1,ry=-s*Math.PI/2,flat=name.replace(/\n/g,' ');
+ B(10,h,w,pick([0xd7d2c8,0xc5ccd6,0xe8dcc4,0xb8c4cf,0xcfc3b5,0xe6e6e6]),s*18,h/2,z,g);
+ B(.1,2.8,w*.92,0xffd9a0,fo,1.5,z,g,{lit:1});
+ B(1,.25,w*.92,pick([0xc62828,0x2e7d32,0xf9a825,0x1565c0,0x6a1b9a]),fo-s*.5,3.1,z,g);
+ B(.12,2.3,1.6,0x3b2a1a,fo-s*.02,1.15,z+w*.3,g);
+ sign(name,Math.min(w*.9,11),1.5,fo-s*.15,4.4,z,ry,tech?'#0d2a52':pick(['#b71c1c','#1b5e20','#f9a825','#4a148c']),'#ffffff');
+ for(let y=6;y<h-1.5;y+=3.2)B(.1,1.9,w*.9,tech?0x5f9fd0:0x8a9aa8,fo,y,z,g);
+ B(5,1.6,w*.4,0x8a8a8a,s*18,h+.8,z,g);Cyl(.8,1.4,0x666666,s*18-s*2,h+.7,z+w*.25,g);Cyl(.05,3,0xcc3333,s*18,h+3,z,g);
+ if(tech&&w>=14){Cyl(.1,3,0x444444,fo-s*.2,h+1.5,z-2.5,g);Cyl(.1,3,0x444444,fo-s*.2,h+1.5,z+2.5,g);sign(pick(BB),8,3,fo-s*.3,h+4,z,ry,'#ffb300','#111111')}
+ scene.add(g);info(g,flat+'\n'+(tech?'Technology Company\nBengaluru IT District':'Shopping Complex\nCommercial Street'));
+}
+[[-1,Ls],[1,Rs]].forEach(([s,list])=>{let cur=28;list.forEach(b=>{building(s,cur-b[1]/2,b[1],b[2],b[0],b[3]);cur-=b[1]})});
+
+// ===== STREET FURNITURE (trees + lamps) =====
+for(let z=24;z>-130;z-=14)[-1,1].forEach(s=>{const g=new THREE.Group();Cyl(.15,2.4,0x6d4c2a,s*11.9,1.2,z,g);Sph(1.1,0x2e7d32,s*11.9,3,z,g);scene.add(g);info(g,'Rain Tree\nBengaluru is called the Garden City.');
+ const l=new THREE.Group();Cyl(.07,5,0x555555,s*9.4,2.5,z-7,l);B(.5,.2,.5,0xfff3b0,s*9.4,5,z-7,l,{lit:1});scene.add(l)});
+
+// ===== TRAFFIC SIGNAL =====
+let SIGNAL='green';const sigs=[];
+function signal(x,z,ry){const g=new THREE.Group();Cyl(.1,5,0x444444,0,2.5,0,g);B(.7,1.9,.5,0x1a1a1a,0,5.1,0,g);
+ const o={};['red','yellow','green'].forEach((k,i)=>o[k]=Sph(.22,0x2a2a2a,0,5.7-i*.6,-.3,g).material=new THREE.MeshBasicMaterial({color:0x2a2a2a}));
+ const ls=[];['red','yellow','green'].forEach((k,i)=>{const m=g.children[g.children.length-3+i];ls.push(m);o[k]=m});
+ g.position.set(x,0,z);g.rotation.y=ry*Math.PI/180;scene.add(g);info(g,'Traffic Signal\nWait for red before crossing!');sigs.push(o)}
+signal(9.3,2.5,0);signal(-9.3,-2.5,180);
+const sigCols={red:0xff2a2a,yellow:0xffc400,green:0x22e04a};
+function setLights(st){sigs.forEach(o=>Object.keys(o).forEach(k=>o[k].material.color.setHex(k===st?sigCols[k]:0x2a2a2a)))}
+(function cyc(){const PH=[['green',9],['yellow',2],['red',7]];let i=0;(function step(){SIGNAL=PH[i][0];setLights(SIGNAL);const el=document.getElementById('sig');el.textContent='Signal: '+SIGNAL.toUpperCase();el.style.color={red:'#ff6b6b',yellow:'#ffd54f',green:'#69f0ae'}[SIGNAL];setTimeout(step,PH[i][1]*1000);i=(i+1)%3})()})();
+
+// ===== VEHICLES (front faces -Z) =====
+function wheels(g,pts){pts.forEach(p=>B(.3,.7,.7,0x111111,p[0],.35,p[1],g))}
+function car(c){const g=new THREE.Group();B(1.8,.6,4.2,c,0,.7,0,g);B(1.5,.6,2.2,c,0,1.3,.3,g);B(1.52,.4,1.6,0x9ecfef,0,1.35,.3,g);wheels(g,[[-.9,-1.4],[.9,-1.4],[-.9,1.4],[.9,1.4]]);return g}
+function bus(c){const g=new THREE.Group();B(2.5,2.6,9,c,0,1.7,0,g);B(2.52,.8,8.4,0x9ecfef,0,2.3,0,g);B(2.4,.5,.1,0xffffff,0,2.9,-4.55,g);wheels(g,[[-1.2,-3],[1.2,-3],[-1.2,3],[1.2,3]]);return g}
+function auto(){const g=new THREE.Group();B(1.4,1.1,2.6,0xf9c80e,0,.9,.1,g);B(1.45,.15,2.2,0x111111,0,1.6,.3,g);B(.9,.8,.5,0x333333,0,.9,-1.4,g);wheels(g,[[-.6,-1],[.6,-1],[0,1.1]]);return g}
+function bike(c){const g=new THREE.Group();B(.5,.5,1.8,c,0,.6,0,g);B(.4,.9,.4,0x2a2a2a,0,1.3,.1,g);Sph(.22,0xe0b090,0,1.9,.1,g);B(.2,.7,.7,0x111111,0,.35,-.7,g);B(.2,.7,.7,0x111111,0,.35,.7,g);return g}
+function truck(){const g=new THREE.Group();B(2.6,2.6,2.2,0x00695c,0,1.7,-2.9,g);B(2.7,2.4,5.4,0xff9800,0,2,1.4,g);wheels(g,[[-1.2,-3],[1.2,-3],[-1.2,1],[1.2,1],[-1.2,3],[1.2,3]]);return g}
+const MOVERS=[];
+function put(g,inf,lane,dir,z,speed,len,xo){const m={g,x:lane+(xo||0),z,dir,speed,lane,len,ry:dir>0?Math.PI:0};g.position.set(m.x,0,z);g.rotation.y=m.ry;scene.add(g);info(g,'Vehicle: '+inf);MOVERS.push(m)}
+function park(g,inf,x,z,ry){g.position.set(x,0,z);g.rotation.y=ry*Math.PI/180;scene.add(g);info(g,'Vehicle: '+inf+' (parked)')}
+put(car(0xd32f2f),'Car',2,-1,30,9.5,4.2);put(car(0xfafafa),'Car',2,-1,-22,9.5,4.2);put(car(0x1976d2),'Car',2,-1,-75,9.5,4.2);
+put(bus(0x1565c0),'Bus',5.4,-1,20,6.5,9);put(auto(),'Auto Rickshaw',5.4,-1,-30,7,2.6);put(bike(0x212121),'Motorcycle',5.4,-1,-60,8,1.8,.5);put(truck(),'Truck',5.4,-1,-100,5.5,8);
+put(car(0xffb300),'Car',-2,1,-110,9,4.2);put(car(0x2e7d32),'Car',-2,1,-50,9,4.2);put(bus(0xe65100),'Bus',-5.4,1,-90,6.5,9);
+put(auto(),'Auto Rickshaw',-5.4,1,-60,7,2.6);put(auto(),'Auto Rickshaw',-5.4,1,-20,7.5,2.6);put(bike(0xc62828),'Scooter',-5.4,1,-100,8,1.8,-.5);put(bike(0x0288d1),'Motorcycle',-5.4,1,-38,8,1.8,.5);put(bike(0x6a1b9a),'Scooter',-5.4,1,5,8,1.8,-.5);
+park(car(0x9e9e9e),'Car',8.05,14,0);park(car(0xef6c00),'Car',-8.05,-22,180);park(car(0xffffff),'Car',8.05,-58,0);
+park(bike(0x37474f),'Scooter',-8.2,10,0);park(bike(0xb71c1c),'Motorcycle',8.2,-5,0);park(bike(0xffb300),'Scooter',-8.2,-70,0);
+
+// ===== BLOCKY AVATARS (Roblox style) =====
+function avatar(shirt,pants,skin){const g=new THREE.Group();const head=B(.6,.6,.6,skin,0,1.45,0,g);B(.1,.1,.02,0x111,-.15,1.5,-.31,g,{lit:1});B(.1,.1,.02,0x111,.15,1.5,-.31,g,{lit:1});
+ B(1,1,.5,shirt,0,.75,0,g);
+ const mk=(x,c,y)=>{const p=new THREE.Group();p.position.set(x,y,0);B(.45,.9,.45,c,0,-.4,0,p);g.add(p);return p};
+ g.arms=[mk(-.72,skin,1.2),mk(.72,skin,1.2)];g.legs=[mk(-.25,pants,.25),mk(.25,pants,.25)];return g}
+const WALK=[];
+for(let i=0;i<14;i++){const g=avatar(pick([0xd32f2f,0x1976d2,0xf9a825,0x2e7d32,0x8e24aa,0xff7043]),pick([0x263238,0x3e2723,0x1a237e]),pick([0xf1c27d,0xc68642,0x8d5524]));
+ const w={g,x:(i%2?1:-1)*(10.3+Math.random()*.9),z:rnd(-125,30),dir:Math.random()<.5?1:-1,sp:rnd(1.2,2.2),ph:Math.random()*6};scene.add(g);info(g,'Pedestrian\nBengaluru streets are always busy!');WALK.push(w)}
+function swing(a,t,k){a.arms[0].rotation.x=Math.sin(t)*k;a.arms[1].rotation.x=-Math.sin(t)*k;a.legs[0].rotation.x=-Math.sin(t)*k;a.legs[1].rotation.x=Math.sin(t)*k}
+
+// ===== GAME STATE =====
+const ROUND=150,INTER=6,RESULTS=9,POINTS=100,PENALTY=50;
+const ITEMS=[["Filter Kaapi",-10.5,-14,"Strong, frothy coffee served in a steel tumbler and davara."],["Masala Dosa",10.5,14,"A crisp rice crepe with spiced potato, a Bengaluru breakfast classic."],["Tender Coconut",10.5,-30,"Fresh coconut water, the best way to beat the afternoon heat."],["Chaat Plate",-10.5,-52,"Tangy, crunchy street snacks served on every busy corner."],["Mysore Silk",-10.5,-4,"Karnataka is famous for its pure silk sarees."],["Cubbon Park Leaf",0,-45,"Cubbon Park is the green lung of the city centre."],["Namma Metro Token",10.5,-90,"Namma Metro is Bengaluru's rapid transit system."],["Startup Trophy",-10.5,-100,"Bengaluru is home to thousands of startups."],["Jasmine Garland",10.5,-64,"Mallige (jasmine) is loved across Karnataka."],["Silicon Chip",0,-105,"Known as the Silicon Valley of India, a global IT hub."]];
+const quest={phase:'intermission',timeLeft:ROUND,collected:0,message:'Round starts in '+INTER};
+let score=0,best=0,discovered=0;const seen=new Set();
+const objs=ITEMS.map(d=>{const m=new THREE.Mesh(new THREE.SphereGeometry(.65,16,12),new THREE.MeshBasicMaterial({color:0xffc400}));m.position.set(d[1],1.7,d[2]);scene.add(m);
+ const l=label('★ '+d[0],'#ffe082');l.position.set(d[1],3.2,d[2]);scene.add(l);return{d,m,l,taken:false}});
+
+const $=id=>document.getElementById(id);let panelTok=0;
+function showInfo(text,isNew){const ls=text.split('\n');$('it').textContent=ls.shift();$('ib').textContent=ls.join('\n')+(isNew?(ls.length?'\n':'')+'★ New discovery!':'');$('info').style.display='block';const t=++panelTok;setTimeout(()=>{if(t===panelTok)$('info').style.display='none'},3500)}
+function clicked(text){let n=false;if(!seen.has(text)){seen.add(text);discovered++;n=true}showInfo(text,n)}
+
+// ===== PLAYER =====
+const spawn=new THREE.Vector3(-10.5,0,18);
+const pl=avatar(0xff9800,0x1565c0,0xf1c27d);scene.add(pl);const P={pos:spawn.clone(),vy:0,ground:true,face:0};
+let yaw=0,pitch=.35;const dist=9,keys={};
+addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='KeyE')collect()});addEventListener('keyup',e=>keys[e.code]=false);
+function respawn(){P.pos.copy(spawn);P.vy=0}
+let down=null,moved=0;
+R.domElement.addEventListener('pointerdown',e=>{down=[e.clientX,e.clientY];moved=0});
+addEventListener('pointermove',e=>{if(!down)return;const dx=e.clientX-down[0],dy=e.clientY-down[1];down=[e.clientX,e.clientY];moved+=Math.abs(dx)+Math.abs(dy);yaw-=dx*.006;pitch=Math.max(-.2,Math.min(1.2,pitch+dy*.005))});
+addEventListener('pointerup',e=>{if(down&&moved<6)pick3D(e);down=null});
+const ray=new THREE.Raycaster(),mv=new THREE.Vector2();
+function pick3D(e){mv.set(e.clientX/innerWidth*2-1,-(e.clientY/innerHeight)*2+1);ray.setFromCamera(mv,cam);
+ const h=ray.intersectObjects(scene.children.filter(c=>c.userData.info),true)[0];if(!h)return;let o=h.object;while(o&&!o.userData.info)o=o.parent;if(o)clicked(o.userData.info)}
+function nearest(){if(quest.phase!=='playing')return null;let b=null,bd=14/3;objs.forEach(o=>{if(o.taken)return;const d=Math.hypot(o.d[1]-P.pos.x,o.d[2]-P.pos.z);if(d<bd){bd=d;b=o}});return b}
+function collect(){const o=nearest();if(!o)return;o.taken=true;o.m.visible=false;o.l.visible=false;quest.collected++;score+=POINTS;discovered++;showInfo(o.d[0]+'\n'+o.d[3]+'\n+'+POINTS+' points!')}
+$('prompt').onclick=collect;
+
+// ===== ROUND LOOP =====
+(function loop(){let phase=0,t=INTER;function tick(){
+ if(phase===0){quest.phase='intermission';quest.message='Round starts in '+t;quest.timeLeft=ROUND;if(--t<0){objs.forEach(o=>{o.taken=false;o.m.visible=true;o.l.visible=true});quest.collected=0;score=0;respawn();phase=1;t=ROUND;quest.phase='playing';quest.message=''}}
+ else if(phase===1){quest.timeLeft=t;if(quest.collected>=ITEMS.length||--t<0){const all=quest.collected>=ITEMS.length;best=Math.max(best,score);quest.phase='results';quest.message=(all?'All treasures found! ':"Time's up! ")+'Score: '+score+' pts';phase=2;t=RESULTS}}
+ else if(--t<0){phase=0;t=INTER}
+ setTimeout(tick,1000)}tick()})();
+
+// ===== MAIN LOOP =====
+let last=performance.now(),cd=0,time=0;
+function frame(now){requestAnimationFrame(frame);const dt=Math.min((now-last)/1000,.05);last=now;time+=dt;
+ // vehicles
+ MOVERS.forEach(m=>{const z=m.z,nz=z+m.dir*m.speed*dt;let bl=false;
+  if(SIGNAL!=='green'){if(m.dir<0){const a=3.8+m.len/2;if(z>=a&&nz<a)bl=true}else{const b=-3.8-m.len/2;if(z<=b&&nz>b)bl=true}}
+  if(!bl)for(const o of MOVERS){if(o!==m&&o.lane===m.lane){const gap=(o.z-z)*m.dir;if(gap>0&&gap<(m.len+o.len)/2+1.2){bl=true;break}}}
+  if(!bl){m.z=nz;if(m.dir<0&&m.z<-128)m.z=35;if(m.dir>0&&m.z>35)m.z=-128;m.g.position.z=m.z}});
+ WALK.forEach(w=>{w.z+=w.dir*w.sp*dt;if(w.z<-125)w.z=32;if(w.z>32)w.z=-125;w.ph+=dt*w.sp*4;w.g.position.set(w.x,0,w.z);w.g.rotation.y=w.dir<0?Math.PI:0;swing(w.g,w.ph,.7)});
+ clouds.forEach(c=>{c.userData.x+=c.userData.sp*dt;if(c.userData.x>150)c.userData.x=-150;c.position.x=c.userData.x});
+ // player movement relative to camera
+ let f=(keys.KeyW||keys.ArrowUp?1:0)-(keys.KeyS||keys.ArrowDown?1:0),r=(keys.KeyD||keys.ArrowRight?1:0)-(keys.KeyA||keys.ArrowLeft?1:0);
+ const sp=20/3;let moving=f||r;
+ if(moving){const l=Math.hypot(f,r);f/=l;r/=l;const fx=-Math.sin(yaw),fz=-Math.cos(yaw),rx=Math.cos(yaw),rz=-Math.sin(yaw);
+  const dx=fx*f+rx*r,dz=fz*f+rz*r;P.pos.x+=dx*sp*dt;P.pos.z+=dz*sp*dt;P.face=Math.atan2(dx,dz)+Math.PI}
+ if(keys.Space&&P.ground){P.vy=9;P.ground=false}
+ P.vy-=28*dt;P.pos.y+=P.vy*dt;if(P.pos.y<=0){P.pos.y=0;P.vy=0;P.ground=true}
+ P.pos.x=Math.max(-12,Math.min(12,P.pos.x));P.pos.z=Math.max(-130,Math.min(40,P.pos.z));
+ pl.position.copy(P.pos);let d=P.face-pl.rotation.y;d=Math.atan2(Math.sin(d),Math.cos(d));pl.rotation.y+=d*Math.min(1,dt*14);
+ swing(pl,moving?time*10:0,moving?.8:0);
+ // traffic hit
+ cd-=dt;if(quest.phase==='playing'&&cd<=0&&P.pos.y<2.67){for(const m of MOVERS){if(Math.abs(P.pos.x-m.x)<1.4&&Math.abs(P.pos.z-m.z)<m.len/2+.5){cd=3;score=Math.max(0,score-PENALTY);respawn();showInfo('Ouch! Hit by a vehicle\n-'+PENALTY+' points. Use the zebra crossing\nand wait for the red signal!');break}}}
+ // treasures
+ objs.forEach(o=>{if(!o.taken){o.m.position.y=1.7+Math.sin(time*2)*.23;o.m.rotation.y=time*2}});
+ const near=nearest();$('prompt').style.display=near?'block':'none';if(near)$('prompt').textContent='Press E to Collect '+near.d[0];
+ // HUD
+ const tl=Math.max(0,quest.timeLeft);$('timer').textContent='⏱ '+Math.floor(tl/60)+':'+String(tl%60).padStart(2,'0');
+ $('items').textContent='Treasures: '+quest.collected+'/'+ITEMS.length;$('score').textContent='Score: '+score+'  Best: '+best;
+ const bn=$('banner');bn.textContent=quest.message;bn.style.display=quest.message&&quest.phase!=='playing'?'block':'none';
+ // camera
+ const cx=P.pos.x+Math.sin(yaw)*Math.cos(pitch)*dist,cy=P.pos.y+1.6+Math.sin(pitch)*dist,cz=P.pos.z+Math.cos(yaw)*Math.cos(pitch)*dist;
+ cam.position.set(cx,Math.max(.5,cy),cz);cam.lookAt(P.pos.x,P.pos.y+1.4,P.pos.z);
+ R.render(scene,cam)}
+requestAnimationFrame(frame);
+</script></body></html>
